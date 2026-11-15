@@ -12,6 +12,9 @@ name: farm-cloud-tokens
 #   * secret HOME_VLESS_URL (preferred) or JP_SOCKS_URL -> local sing-box relay on 10900
 #   * secret PROXY          -> ready-made socks5:// or http:// proxy URL
 on:
+  schedule:
+    # 每天 23:30 UTC（北京时间 07:30）跑一次
+    - cron: '30 23 * * *'
   workflow_dispatch:
     inputs:
       count:
@@ -109,3 +112,18 @@ jobs:
         run: |
           export SW_PROXY="${INPUT_PROXY:-${SECRET_PROXY:-socks5://127.0.0.1:10900}}"
           xvfb-run -a python3 -u add_runtime.py --tokens 0
+
+      - name: Notify Telegram (balance + runtime)
+        if: ${{ always() }}
+        env:
+          NOPROFIT_COOKIES: ${{ secrets.NOPROFIT_COOKIES }}
+          INPUT_PROXY: ${{ github.event.inputs.proxy }}
+          SECRET_PROXY: ${{ secrets.PROXY }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          export SW_PROXY="${INPUT_PROXY:-${SECRET_PROXY:-socks5://127.0.0.1:10900}}"
+          STATE=$(xvfb-run -a python3 -u add_runtime.py --dry-run 2>/dev/null | grep -E '^balance=' || echo "balance=? runtime=?")
+          FARMED=$(grep -oE 'farmed [0-9]+ Cuty link\(s\)' farm.log 2>/dev/null || echo "farmed ? Cuty link(s)")
+          MSG="Switched 刷币完成%0A${FARMED}%0A${STATE}"
+          curl -s -m 20 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" --data-urlencode "chat_id=${TG_CHAT_ID}" --data-urlencode "text=$(printf '%b' "${MSG//%0A/$'\n'}")" | head -c 200

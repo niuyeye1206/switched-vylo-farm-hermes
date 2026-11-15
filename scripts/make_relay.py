@@ -47,7 +47,8 @@ def build(url: str) -> dict:
                 tr["service_name"] = q["serviceName"]
             up["transport"] = tr
         if q.get("security") in ("tls", "reality"):
-            up["tls"] = {"enabled": True, "server_name": q.get("sni") or q.get("host") or u.hostname}
+            up["tls"] = {"enabled": True, "server_name": q.get("sni") or q.get("host") or u.hostname,
+                         "utls": {"enabled": True, "fingerprint": "chrome"}}
             if q.get("security") == "reality":
                 up["tls"]["reality"] = {"enabled": True, "public_key": q.get("pbk", ""),
                                         "short_id": q.get("sid", "")}
