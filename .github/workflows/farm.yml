@@ -124,6 +124,8 @@ jobs:
         run: |
           export SW_PROXY="${INPUT_PROXY:-${SECRET_PROXY:-socks5://127.0.0.1:10900}}"
           STATE=$(xvfb-run -a python3 -u add_runtime.py --dry-run 2>/dev/null | grep -E '^balance=' || echo "balance=? runtime=?")
-          FARMED=$(grep -oE 'farmed [0-9]+ Cuty link\(s\)' farm.log 2>/dev/null || echo "farmed ? Cuty link(s)")
-          MSG="Switched 刷币完成%0A${FARMED}%0A${STATE}"
-          curl -s -m 20 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" --data-urlencode "chat_id=${TG_CHAT_ID}" --data-urlencode "text=$(printf '%b' "${MSG//%0A/$'\n'}")" | head -c 200
+          BAL=$(echo "$STATE" | grep -oE 'balance=[0-9]+' | cut -d= -f2 || echo "?")
+          RT=$(echo "$STATE" | sed -E 's/.*runtime=Runtime ([0-9a-z ]+) lasts until (.*)/\1，到 \2/' || echo "?")
+          N=$(grep -oE 'farmed [0-9]+ Cuty link\(s\)' farm.log 2>/dev/null | grep -oE '[0-9]+' || echo "?")
+          MSG=$(printf '🇫🇷 Switched 刷币通知\n✅ 刷币完成：%s 条 Cuty\n🪙 余额：%s 币\n⏱ 运行时长：%s' "$N" "$BAL" "$RT")
+          curl -s -m 20 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" --data-urlencode "chat_id=${TG_CHAT_ID}" --data-urlencode "text=${MSG}" | head -c 200
