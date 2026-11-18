@@ -272,6 +272,13 @@ def main():
                 return 1
             time.sleep(4)
             st = read_state(page)
+            if not st.get("claimed"):
+                # streak sometimes needs a moment to land; re-read once
+                # before concluding it wasn't claimed
+                time.sleep(10)
+                goto_retry(page, PANEL)
+                time.sleep(4)
+                st = read_state(page)
             log(f"state: {st}")
 
             # how many Cuty links are still available today
@@ -289,11 +296,25 @@ def main():
                     log(f"error: {type(e).__name__}: {str(e)[:120]}")
                     ok = False
                 # refresh panel to read the authoritative quota/balance
+                # (quota alone is not proof: the server can consume the
+                # daily slot without the coin postback landing, so require
+                # the balance to actually move too)
                 goto_retry(page, PANEL)
-                time.sleep(3)
+                time.sleep(8)
                 after = read_state(page)
+                if (after["cuty"] is not None and st["cuty"] is not None
+                        and after["cuty"] > st["cuty"]
+                        and after["bal"] == st["bal"]):
+                    # quota moved but balance didn't: give the postback
+                    # a little more time, then re-read once
+                    time.sleep(12)
+                    goto_retry(page, PANEL)
+                    time.sleep(5)
+                    after = read_state(page)
                 credited = (after["cuty"] is not None and st["cuty"] is not None
-                            and after["cuty"] > st["cuty"])
+                            and after["cuty"] > st["cuty"]
+                            and after["bal"] is not None and st["bal"] is not None
+                            and after["bal"] > st["bal"])
                 log(f"  quota {st['cuty']}->{after['cuty']} balance {st['bal']}->{after['bal']} "
                     f"credited={credited}")
                 st = after
