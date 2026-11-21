@@ -40,6 +40,22 @@ ADFOC_CAP = 4  # AdFoc.us pays 1 Cloud Token per link, 4/day
 RECT_JS = r"""() => {const e=document.querySelector('.cf-turnstile,[data-sitekey]');
     if(!e) return null; const b=e.getBoundingClientRect();
     return {x:b.x,y:b.y,w:b.width,h:b.height};}"""
+
+SKIP_JS = r"""() => {
+  // AdFoc.us "skip" is not a <button>/<a> (button dump only found empty
+  // anchors), so match any visible leaf element whose text is exactly "skip".
+  for (const e of document.querySelectorAll('body *')) {
+    const r = e.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) continue;
+    if (e.children.length) continue;
+    const t = (e.innerText || '').trim().toLowerCase();
+    if (t === 'skip') {
+      e.scrollIntoView({block:'center'}); e.click();
+      return true;
+    }
+  }
+  return false;
+}"""
 HIT_JS = """([x,y]) => {const e=document.elementFromPoint(x,y);
     return e ? (e.tagName + '.' + String(e.className).slice(0,40)) : 'none';}"""
 
@@ -60,7 +76,7 @@ CLICK_BTN_JS = r"""(want) => {
   return null;
 }"""
 
-ADVANCE_WORDS = ["go", "get link", "continue", "unlock", "next", "proceed",
+ADVANCE_WORDS = ["skip", "go", "get link", "continue", "unlock", "next", "proceed",
                  "click here", "visit", "i am not a robot", "verify", "submit"]
 
 
@@ -270,6 +286,13 @@ def earn_one(ctx, panel_page, log, provider):
             if q.evaluate("!!document.querySelector('.cf-turnstile,[data-sitekey]')") \
                     and toklen(q) < 10 and i % 4 == 0:
                 solve_turnstile(q, cdp, log)
+            # AdFoc.us return path: top-right "skip" (any element type)
+            if q.evaluate(SKIP_JS):
+                if i % 2 == 0:
+                    log(f"  step{i}: clicked 'skip'")
+                time.sleep(2)
+                continue
+
             for w in ADVANCE_WORDS:
                 hit = q.evaluate(CLICK_BTN_JS, w)
                 if hit:
