@@ -35,6 +35,7 @@ from panelcookies import load_cookies, save_cookies
 PANEL = os.environ.get("SW_PANEL", "https://panel.switched.cloud/tokens")
 # Daily hard caps enforced by the panel; --count only bounds how many we *attempt*.
 CUTY_CAP = 2
+ADFOC_CAP = 4  # AdFoc.us pays 1 Cloud Token per link, 4/day
 
 RECT_JS = r"""() => {const e=document.querySelector('.cf-turnstile,[data-sitekey]');
     if(!e) return null; const b=e.getBoundingClientRect();
@@ -116,11 +117,13 @@ def read_state(page):
     t = body(page)
     bal = re.search(r"(\d+) cloud tokens", t)
     cuty = re.search(r"(\d+) of 2 today", t)
+    adfoc = re.search(r"(\d+) of 4 today", t)
     lv = re.search(r"(\d+) of 10 today", t)
     claimed = "Claimed today" in t
     return {
         "bal": int(bal.group(1)) if bal else None,
         "cuty": int(cuty.group(1)) if cuty else None,
+        "adfoc": int(adfoc.group(1)) if adfoc else None,
         "lv": int(lv.group(1)) if lv else None,
         "claimed": claimed,
     }
@@ -156,8 +159,32 @@ def solve_turnstile(page, cdp, log):
     return False
 
 
-def earn_cuty(ctx, panel_page, log):
-    """Complete ONE Cuty sponsored link. Returns True if the panel credits it."""
+def claim_streak(page, log):
+    """Click the daily-streak Claim button if it is present.
+    Opening the panel does NOT claim it - the button must be clicked
+    (2026-11-21: Day 4, 0.5 tokens, button still there after a run
+    that only opened the page)."""
+    try:
+        btn = page.evaluate("""()=>{
+          const els=[...document.querySelectorAll('button, a')];
+          const b=els.find(x=>/claim/i.test(x.innerText||'') && /cloud token/i.test(x.innerText||''));
+          if(b){b.click(); return b.innerText.trim();}
+          return null;
+        }""")
+    except Exception as e:
+        log(f"  claim: lookup failed: {type(e).__name__}")
+        return False
+    if not btn:
+        log("  claim: no Claim button found")
+        return False
+    log(f"  claim: clicked '{btn}'")
+    time.sleep(5)
+    return True
+
+
+def earn_one(ctx, panel_page, log, provider):
+    """Complete ONE sponsored link for `provider` (cuty | adfoc).
+    Returns True if the panel redirects back (credit postback fired)."""
     # 1. get a fresh short link from the panel (POST /tokens/earn)
     form = panel_page.evaluate("""()=>{
       const f=[...document.querySelectorAll('form')].find(x=>/tokens\\/earn/.test(x.action));
@@ -170,22 +197,22 @@ def earn_cuty(ctx, panel_page, log):
         return False
     try:
         r = ctx.request.post(form["action"],
-                             form={"_token": form["token"], "provider": "cuty"},
+                             form={"_token": form["token"], "provider": provider},
                              max_redirects=0, timeout=30000)
         cu = r.headers.get("location")
     except Exception as e:
         log(f"  earn POST failed: {type(e).__name__}: {str(e)[:100]}")
         return False
-    if not cu or "cuty" not in cu:
+    if not cu or provider not in cu:
         log(f"  unexpected earn redirect: {cu}")
         return False
-    log(f"  cuty link: {cu}")
+    log(f"  {provider} link: {cu}")
 
-    # 2. walk the cutty.com chain in its own page (panel page stays for verification)
+    # 2. walk the short-link chain in its own page (panel page stays for verification)
     q = ctx.new_page()
     try:
         if not goto_retry(q, cu):
-            log("  cutty page unreachable")
+            log(f"  {provider} page unreachable")
             return False
         time.sleep(5)
         cdp = ctx.new_cdp_session(q)
@@ -204,7 +231,7 @@ def earn_cuty(ctx, panel_page, log):
         if not solve_turnstile(q, cdp, log):
             log("  turnstile: FAILED")
             try:
-                q.screenshot(path=f"/tmp/cuty_fail_{int(time.time())}.png", full_page=True)
+                q.screenshot(path=f"/tmp/{provider}_fail_{int(time.time())}.png", full_page=True)
             except Exception:
                 pass
             return False
@@ -243,7 +270,7 @@ def earn_cuty(ctx, panel_page, log):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--count", type=int, default=25,
-                    help="max Cuty links to attempt (hard panel cap is 2/day)")
+                    help="max links to attempt (Cuty 2/day + AdFoc.us 4/day)")
     ap.add_argument("--proxy", default=os.environ.get("SW_PROXY", "socks5://127.0.0.1:10900"))
     ap.add_argument("--max-fail", type=int, default=3, help="abort after N consecutive failures")
     ap.add_argument("--headless", action="store_true",
@@ -273,25 +300,36 @@ def main():
             time.sleep(4)
             st = read_state(page)
             if not st.get("claimed"):
-                # streak sometimes needs a moment to land; re-read once
-                # before concluding it wasn't claimed
-                time.sleep(10)
-                goto_retry(page, PANEL)
-                time.sleep(4)
-                st = read_state(page)
+                # opening the page does NOT claim the streak - the
+                # Claim button must actually be clicked
+                if claim_streak(page, log):
+                    goto_retry(page, PANEL)
+                    time.sleep(4)
+                    st = read_state(page)
             log(f"state: {st}")
 
-            # how many Cuty links are still available today
-            remaining = CUTY_CAP - (st["cuty"] if st["cuty"] is not None else CUTY_CAP)
-            if remaining <= 0:
-                log("Cuty daily cap already used (2/2) - nothing to farm")
-            target = min(args.count, remaining)
-            log(f"will attempt up to {target} Cuty link(s)")
+            # how many links are still available today, Cuty then AdFoc.us
+            jobs = []
+            cuty_left = CUTY_CAP - (st["cuty"] if st["cuty"] is not None else CUTY_CAP)
+            adfoc_left = ADFOC_CAP - (st["adfoc"] if st["adfoc"] is not None else ADFOC_CAP)
+            jobs += ["cuty"] * max(0, cuty_left)
+            jobs += ["adfoc"] * max(0, adfoc_left)
+            jobs = jobs[:args.count]
+            log(f"queue: cuty {max(0, cuty_left)}/{CUTY_CAP}, adfoc {max(0, adfoc_left)}/{ADFOC_CAP} -> {len(jobs)} job(s)")
+            if not jobs:
+                log("daily caps already used - nothing to farm")
 
-            while done < target and fails < args.max_fail:
-                log(f"--- cuty {done + 1}/{target} (fails={fails}) ---")
+            skip_providers = set()
+            for provider in jobs:
+                if provider in skip_providers:
+                    continue
+                if fails >= args.max_fail:
+                    break
+                qkey = provider  # "cuty" or "adfoc"
+                cap = CUTY_CAP if provider == "cuty" else ADFOC_CAP
+                log(f"--- {provider} {done + 1}/{len(jobs)} (fails={fails}) ---")
                 try:
-                    ok = earn_cuty(ctx, page, log)
+                    ok = earn_one(ctx, page, log, provider)
                 except Exception as e:
                     log(f"error: {type(e).__name__}: {str(e)[:120]}")
                     ok = False
@@ -302,8 +340,8 @@ def main():
                 goto_retry(page, PANEL)
                 time.sleep(8)
                 after = read_state(page)
-                if (after["cuty"] is not None and st["cuty"] is not None
-                        and after["cuty"] > st["cuty"]
+                if (after[qkey] is not None and st[qkey] is not None
+                        and after[qkey] > st[qkey]
                         and after["bal"] == st["bal"]):
                     # quota moved but balance didn't: the postback may be
                     # delayed (2026-11-20/21: 2nd Cuty link twice consumed
@@ -318,11 +356,11 @@ def main():
                         goto_retry(page, PANEL)
                         time.sleep(5)
                         after = read_state(page)
-                credited = (after["cuty"] is not None and st["cuty"] is not None
-                            and after["cuty"] > st["cuty"]
+                credited = (after[qkey] is not None and st[qkey] is not None
+                            and after[qkey] > st[qkey]
                             and after["bal"] is not None and st["bal"] is not None
                             and after["bal"] > st["bal"])
-                log(f"  quota {st['cuty']}->{after['cuty']} balance {st['bal']}->{after['bal']} "
+                log(f"  {provider} quota {st[qkey]}->{after[qkey]} balance {st['bal']}->{after['bal']} "
                     f"credited={credited}")
                 st = after
                 if ok and credited:
@@ -332,11 +370,11 @@ def main():
                     fails += 1
                     time.sleep(8)
                 save_cookies(ctx.cookies())
-                if after.get("cuty") is not None and after["cuty"] >= CUTY_CAP:
-                    log("  Cuty quota full (2/2) - stop, nothing left today")
-                    break
+                if after.get(qkey) is not None and after[qkey] >= cap:
+                    log(f"  {provider} quota full - skip remaining {provider} jobs")
+                    skip_providers.add(provider)
         finally:
-            log(f"SUMMARY: farmed {done} Cuty link(s), {fails} consecutive failure(s), "
+            log(f"SUMMARY: farmed {done} link(s), {fails} consecutive failure(s), "
                 f"final {st}")
             br.close()
     # 正常收尾一律算成功：当天配额已满、刷 0 条、刷到 N 条，都是正常日。
