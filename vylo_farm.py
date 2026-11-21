@@ -305,12 +305,19 @@ def main():
                 if (after["cuty"] is not None and st["cuty"] is not None
                         and after["cuty"] > st["cuty"]
                         and after["bal"] == st["bal"]):
-                    # quota moved but balance didn't: give the postback
-                    # a little more time, then re-read once
-                    time.sleep(12)
-                    goto_retry(page, PANEL)
-                    time.sleep(5)
-                    after = read_state(page)
+                    # quota moved but balance didn't: the postback may be
+                    # delayed (2026-11-20/21: 2nd Cuty link twice consumed
+                    # the quota without crediting). Re-read at 1/2/3 min
+                    # before concluding it didn't land.
+                    for wait in (60, 120, 180):
+                        if after["bal"] is not None and st["bal"] is not None \
+                                and after["bal"] > st["bal"]:
+                            break
+                        log(f"  balance not moved yet, wait {wait}s and re-read")
+                        time.sleep(wait)
+                        goto_retry(page, PANEL)
+                        time.sleep(5)
+                        after = read_state(page)
                 credited = (after["cuty"] is not None and st["cuty"] is not None
                             and after["cuty"] > st["cuty"]
                             and after["bal"] is not None and st["bal"] is not None
@@ -325,6 +332,9 @@ def main():
                     fails += 1
                     time.sleep(8)
                 save_cookies(ctx.cookies())
+                if after.get("cuty") is not None and after["cuty"] >= CUTY_CAP:
+                    log("  Cuty quota full (2/2) - stop, nothing left today")
+                    break
         finally:
             log(f"SUMMARY: farmed {done} Cuty link(s), {fails} consecutive failure(s), "
                 f"final {st}")
