@@ -277,6 +277,14 @@ def earn_one(ctx, panel_page, log, provider):
                         log(f"  step{i}: clicked '{hit}'")
                     break
             if i % 4 == 0:
+                try:
+                    btns = q.evaluate("""()=>{
+                      return [...document.querySelectorAll('button, a, input[type=submit]')].filter(e=>e.offsetParent!==null).slice(0,12).map(e=>((e.tagName)+':'+(e.innerText||e.value||'').trim().slice(0,30)+(e.disabled?'[disabled]':'')));
+                    }""")
+                    log(f"  step{i} buttons: {btns}")
+                except Exception as e:
+                    log(f"  step{i} buttons dump failed: {type(e).__name__}")
+            if i % 4 == 0:
                 log(f"  step{i}: {q.url.split('/')[-1][:20]} :: {txt[:60]}")
             time.sleep(4)
 
