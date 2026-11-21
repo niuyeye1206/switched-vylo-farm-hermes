@@ -301,8 +301,22 @@ def earn_one(ctx, panel_page, log, provider):
             # AdFoc.us return path: top-right "skip" (any element type)
             if i == 0:
                 try:
-                    d = q.evaluate("window.__skipDump || []")
-                    log(f"  skip elements: {d}")
+                    d = q.evaluate("""()=>{
+                      const out = {frames: [], skipInFrames: []};
+                      const walk = (doc, label) => {
+                        for (const e of doc.querySelectorAll("body *")) {
+                          const t = (e.innerText || "").trim();
+                          if (/skip/i.test(t) && t.length < 30) out.skipInFrames.push(label + " " + e.tagName + " text=" + JSON.stringify(t));
+                        }
+                      };
+                      walk(document, "main");
+                      for (const fr of document.querySelectorAll("iframe")) {
+                        out.frames.push(fr.src || "(no src)");
+                        try { walk(fr.contentDocument, "iframe:" + (fr.src || "").slice(0, 40)); } catch (e) { out.skipInFrames.push("iframe blocked: " + (fr.src || "").slice(0, 40)); }
+                      }
+                      return out;
+                    }""")
+                    log(f"  skip debug: {d}")
                 except Exception as e:
                     log(f"  skip dump failed: {type(e).__name__}")
 
