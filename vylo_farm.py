@@ -185,32 +185,35 @@ def claim_streak(page, log):
 def earn_one(ctx, panel_page, log, provider):
     """Complete ONE sponsored link for `provider` (cuty | adfoc).
     Returns True if the panel redirects back (credit postback fired)."""
-    # 1. get a fresh short link from the panel (POST /tokens/earn)
-    form = panel_page.evaluate("""()=>{
-      const f=[...document.querySelectorAll('form')].find(x=>/tokens\\/earn/.test(x.action));
-      if(!f) return null;
-      const g=n=>f.querySelector(`input[name=${n}]`)?.value;
-      return {action:f.action, token:g('_token')};
+    # 1. get a fresh short link from the panel (POST /tokens/earn).
+    # Each provider has its OWN form, and the server-side provider
+    # value is NOT the display name: Cuty -> "cuty", AdFoc.us -> "adfocus"
+    # (2026-11-21: POSTing provider=adfoc returned no redirect at all).
+    forms = panel_page.evaluate("""()=>{
+      return [...document.querySelectorAll('form')].filter(x=>/tokens\/earn/.test(x.action)).map(f=>{
+        const g=n=>f.querySelector(`input[name=${n}]`)?.value;
+        const btn=(f.querySelector('button')||{}).innerText||'';
+        return {action:f.action, token:g('_token'), provider:g('provider'), button:btn.trim()};
+      });
     }""")
-    # debug: dump every /tokens/earn form so we can see which one
-    # belongs to which provider (Cuty vs AdFoc.us vs Linkvertise)
-    try:
-        forms = panel_page.evaluate("""()=>{
-          return [...document.querySelectorAll('form')].filter(x=>/tokens\/earn/.test(x.action)).map(f=>{
-            const ins=[...f.querySelectorAll('input')].map(n=>n.name+'='+n.value);
-            const btn=(f.querySelector('button')||{}).innerText||'';
-            return {action:f.action, inputs:ins, button:btn.trim()};
-          });
-        }""")
-        log(f"  earn forms: {forms}")
-    except Exception as e:
-        log(f"  earn forms dump failed: {type(e).__name__}")
+    want = {"cuty": "cuty", "adfoc": "adfocus"}.get(provider, provider)
+    form = None
+    for f in forms or []:
+        pv = (f.get("provider") or "").lower()
+        btn = (f.get("button") or "").lower()
+        if pv == want or provider in btn.replace(".", ""):
+            form = f
+            break
+    if form is None and forms:
+        form = forms[0]
     if not form or not form.get("token"):
         log("  no /tokens/earn form (quota exhausted / markup changed?)")
         return False
+    server_provider = form.get("provider") or want
+    log(f"  earn form: provider={server_provider} button='{form.get('button')}'")
     try:
         r = ctx.request.post(form["action"],
-                             form={"_token": form["token"], "provider": provider},
+                             form={"_token": form["token"], "provider": server_provider},
                              max_redirects=0, timeout=30000)
         cu = r.headers.get("location")
     except Exception as e:
