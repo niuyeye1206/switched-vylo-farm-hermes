@@ -243,15 +243,22 @@ def earn_one(ctx, panel_page, log, provider):
             if(b)b.click()}""")
         time.sleep(6)
 
-        # step B: solve the Cloudflare Turnstile checkbox
-        if not solve_turnstile(q, cdp, log):
-            log("  turnstile: FAILED")
-            try:
-                q.screenshot(path=f"/tmp/{provider}_fail_{int(time.time())}.png", full_page=True)
-            except Exception:
-                pass
-            return False
-        log("  turnstile: solved")
+        # step B: solve the Cloudflare Turnstile checkbox, IF one is
+        # shown on this step. AdFoc.us does not render a Turnstile here
+        # (widget never appears), so a missing widget is not a failure -
+        # the advance loop below re-solves one if it shows up later.
+        has_ts = q.evaluate("!!document.querySelector('.cf-turnstile,[data-sitekey]')")
+        if has_ts:
+            if not solve_turnstile(q, cdp, log):
+                log("  turnstile: FAILED")
+                try:
+                    q.screenshot(path=f"/tmp/{provider}_fail_{int(time.time())}.png", full_page=True)
+                except Exception:
+                    pass
+                return False
+            log("  turnstile: solved")
+        else:
+            log("  turnstile: none on this page, proceeding")
 
         # step C: submit + advance through "preparing" until it redirects back to the panel
         for i in range(20):
