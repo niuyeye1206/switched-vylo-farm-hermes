@@ -35,7 +35,7 @@ from panelcookies import load_cookies, save_cookies
 PANEL = os.environ.get("SW_PANEL", "https://panel.switched.cloud/tokens")
 # Daily hard caps enforced by the panel; --count only bounds how many we *attempt*.
 CUTY_CAP = 2
-ADFOC_CAP = 4  # AdFoc.us pays 1 Cloud Token per link, 4/day
+ADFOC_CAP = 0  # DISABLED 2026-11-21: AdFoc.us "skip" button never renders in the automated browser (anti-bot; only real phones get it). Manual-only, 1/day max via phone. Set back to 4 if a bypass is found.
 
 RECT_JS = r"""() => {const e=document.querySelector('.cf-turnstile,[data-sitekey]');
     if(!e) return null; const b=e.getBoundingClientRect();
