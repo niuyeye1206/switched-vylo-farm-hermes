@@ -42,8 +42,20 @@ RECT_JS = r"""() => {const e=document.querySelector('.cf-turnstile,[data-sitekey
     return {x:b.x,y:b.y,w:b.width,h:b.height};}"""
 
 SKIP_JS = r"""() => {
-  // AdFoc.us "skip" is not a <button>/<a> (button dump only found empty
-  // anchors), so match any visible leaf element whose text is exactly "skip".
+  // AdFoc.us "skip" is not a <button>/<a>. Find any element whose text
+  // contains "skip" and log its shape once, then click the exact match.
+  if (!window.__skipLogged) {
+    window.__skipLogged = true;
+    const found = [];
+    for (const e of document.querySelectorAll('body *')) {
+      const t = (e.innerText || '').trim();
+      if (/skip/i.test(t) && t.length < 30) {
+        const r = e.getBoundingClientRect();
+        found.push(e.tagName + '#' + (e.id || '') + '.' + (e.className || '').toString().slice(0, 30) + ' text=' + JSON.stringify(t) + ' rect=' + Math.round(r.width) + 'x' + Math.round(r.height) + ' kids=' + e.children.length);
+      }
+    }
+    window.__skipDump = found;
+  }
   for (const e of document.querySelectorAll('body *')) {
     const r = e.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) continue;
@@ -287,6 +299,13 @@ def earn_one(ctx, panel_page, log, provider):
                     and toklen(q) < 10 and i % 4 == 0:
                 solve_turnstile(q, cdp, log)
             # AdFoc.us return path: top-right "skip" (any element type)
+            if i == 0:
+                try:
+                    d = q.evaluate("window.__skipDump || []")
+                    log(f"  skip elements: {d}")
+                except Exception as e:
+                    log(f"  skip dump failed: {type(e).__name__}")
+
             if q.evaluate(SKIP_JS):
                 if i % 2 == 0:
                     log(f"  step{i}: clicked 'skip'")
