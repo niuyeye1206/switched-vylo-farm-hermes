@@ -192,6 +192,19 @@ def earn_one(ctx, panel_page, log, provider):
       const g=n=>f.querySelector(`input[name=${n}]`)?.value;
       return {action:f.action, token:g('_token')};
     }""")
+    # debug: dump every /tokens/earn form so we can see which one
+    # belongs to which provider (Cuty vs AdFoc.us vs Linkvertise)
+    try:
+        forms = panel_page.evaluate("""()=>{
+          return [...document.querySelectorAll('form')].filter(x=>/tokens\/earn/.test(x.action)).map(f=>{
+            const ins=[...f.querySelectorAll('input')].map(n=>n.name+'='+n.value);
+            const btn=(f.querySelector('button')||{}).innerText||'';
+            return {action:f.action, inputs:ins, button:btn.trim()};
+          });
+        }""")
+        log(f"  earn forms: {forms}")
+    except Exception as e:
+        log(f"  earn forms dump failed: {type(e).__name__}")
     if not form or not form.get("token"):
         log("  no /tokens/earn form (quota exhausted / markup changed?)")
         return False
